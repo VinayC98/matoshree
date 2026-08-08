@@ -1,0 +1,139 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id    Int     @id @default(autoincrement())
+  email String  @unique
+  password String
+  name  String?
+}
+
+model Lab {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String
+  totalSeats   Int
+  seats        Seat[]
+  allocations  DailySeatAllocation[]
+}
+
+model Seat {
+  id            String   @id @default(uuid()) @db.Uuid
+  seatNumber    Int
+  isFixedLocked Boolean  @default(false)
+  labId         String   @db.Uuid
+  lab           Lab      @relation(fields: [labId], references: [id])
+  allocations   DailySeatAllocation[]
+  memberships   Membership[]
+}
+
+model Student {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  mobile      String   @unique
+  createdAt   DateTime @default(now())
+  memberships Membership[]
+  allocations DailySeatAllocation[]
+  payments    Payment[]
+}
+
+model Membership {
+  id                String   @id @default(uuid()) @db.Uuid
+  studentId         String   @db.Uuid
+  student           Student  @relation(fields: [studentId], references: [id])
+  membershipPlanId  String   @db.Uuid
+  membershipPlan    MembershipPlan @relation(fields: [membershipPlanId], references: [id])
+  shiftId           String   @db.Uuid
+  shift             Shift    @relation(fields: [shiftId], references: [id])
+  fixedSeatId       String?  @db.Uuid
+  fixedSeat         Seat?    @relation(fields: [fixedSeatId], references: [id])
+  startDate         DateTime
+  endDate           DateTime
+  priceSnapshot     Int
+  registrationFee   Int
+  isActive          Boolean  @default(true)
+  payments          Payment[]
+}
+
+model DailySeatAllocation {
+  id        String   @id @default(uuid()) @db.Uuid
+  date      DateTime
+  studentId String   @db.Uuid
+  student   Student  @relation(fields: [studentId], references: [id])
+  seatId    String   @db.Uuid
+  seat      Seat     @relation(fields: [seatId], references: [id])
+  labId     String   @db.Uuid
+  lab       Lab      @relation(fields: [labId], references: [id])
+  shiftId   String   @db.Uuid
+  shift     Shift    @relation(fields: [shiftId], references: [id])
+  // Seat cannot be double-booked
+  @@unique([date, shiftId, seatId], name: "unique_seat_allocation")
+}
+
+model Payment {
+  id                String   @id @default(uuid()) @db.Uuid
+  membershipId      String   @db.Uuid
+  studentId         String   @db.Uuid
+  amount            Int
+  paymentMode       String
+  paymentType       String
+  paidOn            DateTime @default(now())
+  membership        Membership @relation(fields: [membershipId], references: [id])
+  student           Student    @relation(fields: [studentId], references: [id])
+}
+
+model Shift {
+  id        String   @id @default(uuid()) @db.Uuid
+  code      String   @unique   // FULL_DAY, MORNING, EVENING
+  name      String
+  startTime String   // "07:00"
+  endTime   String   // "23:00"
+  isActive  Boolean  @default(true)
+  memberships Membership[]
+  pricing     Pricing[]
+  allocations DailySeatAllocation[]
+}
+
+model MembershipPlan {
+  id                  String   @id @default(uuid()) @db.Uuid
+  code                String   @unique   // FIXED, FULL, HALF
+  name                String
+  requiresFixedSeat   Boolean
+  isSeatDailyAssigned Boolean
+  isActive            Boolean  @default(true)
+  memberships Membership[]
+  pricing     Pricing[]
+}
+
+model Pricing {
+  id               String   @id @default(uuid()) @db.Uuid
+  membershipPlanId String   @db.Uuid
+  membershipPlan   MembershipPlan @relation(fields: [membershipPlanId], references: [id])
+  shiftId          String?  @db.Uuid
+  shift            Shift?   @relation(fields: [shiftId], references: [id])
+  monthlyFee       Int
+  registrationFee  Int
+  billingCycleDays Int      @default(30)
+  isActive         Boolean  @default(true)
+  effectiveFrom    DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  action    String
+  entity    String
+  entityId  String
+  meta      Json?
+  createdAt DateTime @default(now())
+}

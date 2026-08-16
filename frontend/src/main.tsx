@@ -28,5 +28,5 @@ createRoot(document.getElementById("root")!).render(
         theme="dark"
       />
     </QueryClientProvider>
-  </StrictMode>
+  </StrictMode>,
 );

@@ -1,38 +1,61 @@
 import api from "./axios";
 
-export async function getSeatMap(params: { date: string; shiftId: string }) {
-  const res = await api.get("/allocations/seat-map", { params });
-  return res.data;
-}
+export type SeatMapParams = {
+  date: string;
+  shiftId: string;
+};
 
-export async function assignSeat(payload: {
+export type AssignSeatPayload = {
   studentId: string;
   seatId: string;
   shiftId: string;
   date: string;
-}) {
-  return api.post("/allocations/assign", payload);
-}
+};
 
-export async function unassignSeat(payload: { allocationId: string }) {
-  return api.post("/allocations/unassign", payload);
-}
+export type UnassignSeatPayload = {
+  allocationId: string;
+};
 
-// export async function swapSeat(payload: {
-//   fromAllocationId: string;
-//   toSeatId: string;
-// }) {
-//   return api.post("/allocations/swap", payload);
-// }
-
-export const swapDailySeat = (payload: {
+export type SwapDailySeatPayload = {
   date: string;
   shiftId: string;
   seatIdA: string;
   seatIdB: string;
-}) => api.post("/allocations/swap-daily", payload);
+};
 
-export const swapFixedSeat = (payload: {
+export type SwapFixedSeatPayload = {
   studentId: string;
   newSeatId: string;
-}) => api.post("/memberships/swap-fixed", payload);
+};
+
+export async function getSeatMap(params: SeatMapParams) {
+  const res = await api.get("/allocations/seat-map", {
+    params,
+  });
+
+  return res.data;
+}
+
+export async function assignSeat(payload: AssignSeatPayload) {
+  const res = await api.post("/allocations/assign", payload);
+
+  return res.data;
+}
+
+export async function unassignSeat(payload: UnassignSeatPayload) {
+  const res = await api.post("/allocations/unassign", payload);
+
+  return res.data;
+}
+
+export async function swapDailySeat(payload: SwapDailySeatPayload) {
+  const res = await api.post("/allocations/swap-daily", payload);
+
+  return res.data;
+}
+
+export async function swapFixedSeat(payload: SwapFixedSeatPayload) {
+  const res = await api.post("/allocations/swap-fixed", payload);
+
+  return res.data;
+}

@@ -1,49 +1,159 @@
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { getStudentsByLimit, createStudent } from "../api/students.api";
-import { useState, useMemo } from "react";
-import { toast } from "react-toastify";
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
+import { toast } from "react-toastify";
+
+import { createStudent, getStudentsByLimit } from "../api/students.api";
 
 const PAGE_SIZE = 10;
 
+type Student = {
+  id: string;
+  name: string;
+  mobile: string;
+
+  hasActiveMembership?: boolean;
+
+  paymentStatus?: "YET_TO_PAY" | "PARTIAL" | "PAID";
+
+  account?: {
+    totalDue?: number;
+    totalPaid?: number;
+    outstanding?: number;
+  };
+
+  activeMembership?: {
+    id: string;
+    startDate?: string;
+    endDate?: string;
+
+    plan?: {
+      id: string;
+      code?: string;
+      name?: string;
+    };
+
+    planId?: string;
+
+    shift?: {
+      id: string;
+      code?: string;
+      name?: string;
+    };
+
+    shiftId?: string;
+  } | null;
+
+  seat?: string | null;
+
+  seatDetails?: {
+    id?: string;
+    seatNumber?: number;
+    lab?: {
+      id?: string;
+      name?: string;
+    };
+    type?: "FIXED" | "DAILY" | string;
+  } | null;
+};
+
+type Pagination = {
+  total?: number;
+  totalPages?: number;
+  page?: number;
+  limit?: number;
+};
+
+type ApiErrorShape = {
+  response?: {
+    status?: number;
+  };
+};
+
+function isApiError(error: unknown): error is ApiErrorShape {
+  return typeof error === "object" && error !== null;
+}
+
 export default function Students() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
-  /* --------------------
-     LOCAL STATE
-  -------------------- */
+  /* =========================================================
+     FORM
+  ========================================================= */
+
   const [name, setName] = useState("");
   const [mobile, setMobile] = useState("");
 
+  /* =========================================================
+     SEARCH
+  ========================================================= */
+
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+
   const [page, setPage] = useState(1);
 
-  /* --------------------
-     DATA FETCH
-     Fetch more than 10 so pagination works
-  -------------------- */
-  const {
-    data = [],
-    refetch,
-    isLoading,
-  } = useQuery({
-    queryKey: ["students", "latest"],
-    queryFn: () => getStudentsByLimit({ page, limit: PAGE_SIZE }), // 👈 fetch more
+  /* =========================================================
+     SEARCH DEBOUNCE
+  ========================================================= */
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearch(searchInput.trim());
+      setPage(1);
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
+  /* =========================================================
+     QUERY
+  ========================================================= */
+
+  const { data, isLoading, isFetching, isError, refetch } = useQuery({
+    queryKey: ["students", page, search],
+    queryFn: () =>
+      getStudentsByLimit({
+        page,
+        limit: PAGE_SIZE,
+        search,
+      }),
+    placeholderData: (previousData) => previousData,
   });
 
-  /* --------------------
+  const students: Student[] = Array.isArray(data?.data) ? data.data : [];
+
+  const pagination: Pagination = data?.pagination ?? {};
+
+  const total = Number(pagination.total ?? 0);
+
+  const totalPages = Math.max(
+    Number(pagination.totalPages ?? 0),
+    total > 0 ? Math.ceil(total / PAGE_SIZE) : 0,
+  );
+
+  /* =========================================================
      CREATE STUDENT
-  -------------------- */
+  ========================================================= */
+
   const mutation = useMutation({
     mutationFn: createStudent,
+
     onSuccess: () => {
       toast.success("Student added successfully!");
+
       setName("");
       setMobile("");
-      refetch();
+      setPage(1);
+
+      queryClient.invalidateQueries({
+        queryKey: ["students"],
+      });
     },
-    onError: (error: any) => {
-      if (error.response?.status === 409) {
+
+    onError: (error: unknown) => {
+      if (isApiError(error) && error.response?.status === 409) {
         toast.error("Student with this mobile already exists");
       } else {
         toast.error("Failed to add student");
@@ -51,425 +161,1286 @@ export default function Students() {
     },
   });
 
-  /* --------------------
-     FILTER + PAGINATION
-  -------------------- */
-  const filteredStudents = useMemo(() => {
-    if (!search) return data;
+  const handleCreateStudent = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
 
-    const q = search.toLowerCase();
-    return data.filter(
-      (s: any) => s.name.toLowerCase().includes(q) || s.mobile.includes(q),
-    );
-  }, [data, search]);
+    const trimmedName = name.trim();
+    const trimmedMobile = mobile.trim();
 
-  const totalPages = Math.ceil(filteredStudents.length / PAGE_SIZE);
+    if (!trimmedName) {
+      toast.error("Enter student name");
+      return;
+    }
 
-  const paginatedStudents = useMemo(() => {
-    const start = (page - 1) * PAGE_SIZE;
-    return filteredStudents.slice(start, start + PAGE_SIZE);
-  }, [filteredStudents, page]);
+    if (!trimmedMobile) {
+      toast.error("Enter mobile number");
+      return;
+    }
 
-  /* Reset page when filter changes */
-  const handleSearch = (value: string) => {
-    setSearch(value);
-    setPage(1);
+    mutation.mutate({
+      name: trimmedName,
+      mobile: trimmedMobile,
+    });
   };
 
-  if (isLoading) return <p>Loading students...</p>;
-  console.log(data, "data");
-  /* --------------------
-     RENDER
-  -------------------- */
-  return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">Students</h1>
+  /* =========================================================
+     PAGINATION
+  ========================================================= */
 
-      {/* ADD STUDENT */}
-      <form
-        className="bg-white p-4 rounded-lg shadow-sm flex gap-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          mutation.mutate({ name, mobile });
-        }}
-      >
-        <input
-          className="border p-2 rounded w-1/3"
-          placeholder="Student Name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          required
-        />
+  const handlePrevious = () => {
+    if (page <= 1 || isFetching) return;
 
-        <input
-          className="border p-2 rounded w-1/3"
-          placeholder="Mobile Number"
-          value={mobile}
-          onChange={(e) => setMobile(e.target.value)}
-          required
-        />
+    setPage((current) => current - 1);
+  };
 
-        <button
-          className="bg-blue-800 text-white px-4 rounded disabled:opacity-50"
-          disabled={mutation.isPending}
-        >
-          Add Student
-        </button>
-      </form>
+  const handleNext = () => {
+    if (isFetching || !totalPages || page >= totalPages) {
+      return;
+    }
 
-      {/* SEARCH */}
-      <div className="flex justify-between items-center">
-        <input
-          className="border p-2 rounded w-1/3"
-          placeholder="Search by name or mobile"
-          value={search}
-          onChange={(e) => handleSearch(e.target.value)}
-        />
-        <p className="text-sm text-gray-500">
-          Showing {paginatedStudents.length} of {filteredStudents.length}
-        </p>
+    setPage((current) => current + 1);
+  };
+
+  /* =========================================================
+     LOADING
+  ========================================================= */
+
+  if (isLoading) {
+    return (
+      <div className="min-h-full bg-stone-50 p-4 sm:p-6">
+        <div className="mx-auto w-full max-w-7xl">
+          <PageSkeleton />
+        </div>
       </div>
+    );
+  }
 
-      {/* TABLE */}
-      <table className="w-full border bg-white">
-        <thead>
-          <tr className="bg-gray-100 text-left">
-            <th className="p-2">No</th>
-            <th className="p-2">Name</th>
-            <th className="p-2">Mobile</th>
-            <th className="p-2">Membership</th>
-            <th className="p-2">Seat</th>
-            <th className="p-2">Valid Till</th>
-            <th className="p-2">Actions</th>
-            <th className="p-2">Status</th>
-          </tr>
-        </thead>
+  /* =========================================================
+     ERROR
+  ========================================================= */
 
-        <tbody>
-          {paginatedStudents.map((s: any, index: number) => (
-            <tr key={s.id} className="border-t">
-              <td className="p-2">{index + 1}</td>
-              <td className="p-2">{s.name}</td>
-              <td className="p-2">{s.mobile}</td>
-              <td className="p-2">
-                {s.activeMembership ? (
-                  <div className="flex flex-col">
-                    <span>
-                      {s.activeMembership.planName} /{" "}
-                      {s.activeMembership.shiftName}
-                    </span>
-                    {!s.seat && (
-                      <span className="text-xs text-green-600">
-                        Seat not assigned
-                      </span>
-                    )}
-                  </div>
-                ) : (
-                  <span className="text-red-600">Membership not available</span>
-                )}
-              </td>
-              <td className="p-2">{s.seat ?? "—"}</td>
-              <td className="p-2">
-                {s.activeMembership?.endDate
-                  ? new Date(s.activeMembership.endDate).toLocaleString(
-                      "en-IN",
-                      {
-                        day: "2-digit",
-                        month: "short",
-                        year: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      },
-                    )
-                  : "—"}
-              </td>
+  if (isError) {
+    return (
+      <div className="min-h-full bg-stone-50 p-4 sm:p-6">
+        <div className="mx-auto w-full max-w-7xl">
+          <div className="rounded-xl border border-red-200 bg-red-50 p-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-red-800">
+                  Failed to load students
+                </h2>
 
-              <td className="p-2 flex gap-2">
-                <button
-                  onClick={() => navigate(`/seat-map?studentId=${s.id}`)}
-                  disabled={!!s.seat}
-                  className={`${
-                    s.seat
-                      ? "text-gray-400 cursor-not-allowed"
-                      : "text-blue-600 hover:underline"
-                  }`}
+                <p className="mt-1 text-xs text-red-600">
+                  Something went wrong while loading the student list.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => refetch()}
+                className="
+                  rounded-lg
+                  border
+                  border-red-200
+                  bg-white
+                  px-4
+                  py-2
+                  text-sm
+                  font-medium
+                  text-red-700
+                  transition
+                  hover:bg-red-50
+                "
+              >
+                Try Again
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* =========================================================
+     PAGE
+  ========================================================= */
+
+  return (
+    <div className="min-h-full bg-stone-50 p-4 sm:p-6">
+      <div className="mx-auto w-full max-w-7xl space-y-5">
+        {/* =====================================================
+            HEADER
+        ===================================================== */}
+
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold text-stone-800">Students</h1>
+
+            <p className="mt-1 text-sm text-stone-500">
+              Manage students, memberships, payments and seat assignments.
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs text-stone-500 shadow-sm">
+            <span className="font-medium text-stone-700">{total}</span>{" "}
+            {total === 1 ? "student" : "students"}
+          </div>
+        </div>
+
+        {/* =====================================================
+            ADD STUDENT
+        ===================================================== */}
+
+        <section className="rounded-xl border border-stone-200 bg-white shadow-sm">
+          <div className="border-b border-stone-100 px-4 py-4 sm:px-5">
+            <h2 className="text-sm font-semibold text-stone-800">
+              Add Student
+            </h2>
+
+            <p className="mt-1 text-xs text-stone-500">
+              Create a student profile using their name and mobile number.
+            </p>
+          </div>
+
+          <form onSubmit={handleCreateStudent} className="p-4 sm:p-5">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_1fr_auto] md:items-end">
+              {/* NAME */}
+
+              <div>
+                <label
+                  htmlFor="student-name"
+                  className="mb-1.5 block text-xs font-medium text-stone-600"
                 >
-                  Assign Seat
-                </button>
-                <button
-                  onClick={() => navigate(`/students/${s.id}`)}
-                  className="text-yellow-600 hover:underline"
+                  Student Name
+                </label>
+
+                <input
+                  id="student-name"
+                  type="text"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="Enter student name"
+                  autoComplete="name"
+                  required
+                  className="
+                    h-10
+                    w-full
+                    rounded-lg
+                    border
+                    border-stone-300
+                    bg-white
+                    px-3
+                    text-sm
+                    text-stone-800
+                    outline-none
+                    transition
+                    placeholder:text-stone-400
+                    focus:border-amber-600
+                    focus:ring-2
+                    focus:ring-amber-100
+                  "
+                />
+              </div>
+
+              {/* MOBILE */}
+
+              <div>
+                <label
+                  htmlFor="student-mobile"
+                  className="mb-1.5 block text-xs font-medium text-stone-600"
                 >
-                  View
+                  Mobile Number
+                </label>
+
+                <input
+                  id="student-mobile"
+                  type="tel"
+                  value={mobile}
+                  onChange={(event) => setMobile(event.target.value)}
+                  placeholder="Enter mobile number"
+                  autoComplete="tel"
+                  required
+                  className="
+                    h-10
+                    w-full
+                    rounded-lg
+                    border
+                    border-stone-300
+                    bg-white
+                    px-3
+                    text-sm
+                    text-stone-800
+                    outline-none
+                    transition
+                    placeholder:text-stone-400
+                    focus:border-amber-600
+                    focus:ring-2
+                    focus:ring-amber-100
+                  "
+                />
+              </div>
+
+              {/* BUTTON */}
+
+              <button
+                type="submit"
+                disabled={mutation.isPending}
+                className="
+                  h-10
+                  rounded-lg
+                  bg-amber-700
+                  px-5
+                  text-sm
+                  font-medium
+                  text-white
+                  transition
+                  hover:bg-amber-800
+                  disabled:cursor-not-allowed
+                  disabled:opacity-50
+                  md:min-w-[130px]
+                "
+              >
+                {mutation.isPending ? "Adding..." : "Add Student"}
+              </button>
+            </div>
+          </form>
+        </section>
+
+        {/* =====================================================
+            SEARCH
+        ===================================================== */}
+
+        <section className="rounded-xl border border-stone-200 bg-white shadow-sm">
+          <div className="flex flex-col gap-3 p-4 sm:p-5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="relative w-full lg:max-w-md">
+              <SearchIcon />
+
+              <input
+                type="search"
+                value={searchInput}
+                onChange={(event) => setSearchInput(event.target.value)}
+                placeholder="Search by name or mobile"
+                className="
+                  h-10
+                  w-full
+                  rounded-lg
+                  border
+                  border-stone-300
+                  bg-white
+                  pl-10
+                  pr-10
+                  text-sm
+                  text-stone-800
+                  outline-none
+                  transition
+                  placeholder:text-stone-400
+                  focus:border-amber-600
+                  focus:ring-2
+                  focus:ring-amber-100
+                "
+              />
+
+              {searchInput && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchInput("");
+                    setSearch("");
+                    setPage(1);
+                  }}
+                  className="
+                    absolute
+                    right-3
+                    top-1/2
+                    -translate-y-1/2
+                    text-stone-400
+                    hover:text-stone-700
+                  "
+                  aria-label="Clear search"
+                >
+                  <CloseIcon />
                 </button>
-              </td>
-              <td className="p-2">
-                {s.activeMembership ? (
-                  <span className="text-green-600">Active</span>
-                ) : (
-                  <span className="text-red-600  cursor-not-allowed">
-                    Inactive
-                  </span>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+              )}
+            </div>
 
-      {/* PAGINATION */}
-      {totalPages > 1 && (
-        <div className="flex justify-center items-center gap-4">
+            <div className="flex items-center justify-between gap-3 text-xs text-stone-500 sm:justify-end">
+              {isFetching && (
+                <span className="flex items-center gap-1.5 text-amber-700">
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-amber-600" />
+                  Updating
+                </span>
+              )}
+
+              <span>
+                Showing{" "}
+                <strong className="font-medium text-stone-700">
+                  {students.length}
+                </strong>{" "}
+                of{" "}
+                <strong className="font-medium text-stone-700">{total}</strong>
+              </span>
+            </div>
+          </div>
+        </section>
+
+        {/* =====================================================
+            EMPTY
+        ===================================================== */}
+
+        {students.length === 0 ? (
+          <EmptyStudentsState
+            searching={Boolean(search)}
+            onClearSearch={() => {
+              setSearchInput("");
+              setSearch("");
+              setPage(1);
+            }}
+          />
+        ) : (
+          <>
+            {/* =================================================
+                DESKTOP TABLE
+            ================================================= */}
+
+            <section className="hidden overflow-hidden rounded-xl border border-stone-200 bg-white shadow-sm lg:block">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[1100px] text-sm">
+                  <thead>
+                    <tr className="border-b border-stone-200 bg-stone-50 text-left">
+                      <th className="w-16 px-4 py-3 text-xs font-medium uppercase tracking-wide text-stone-400">
+                        No.
+                      </th>
+
+                      <th className="px-4 py-3 text-xs font-medium uppercase tracking-wide text-stone-400">
+                        Student
+                      </th>
+
+                      <th className="px-4 py-3 text-xs font-medium uppercase tracking-wide text-stone-400">
+                        Mobile
+                      </th>
+
+                      <th className="px-4 py-3 text-xs font-medium uppercase tracking-wide text-stone-400">
+                        Membership
+                      </th>
+
+                      <th className="px-4 py-3 text-xs font-medium uppercase tracking-wide text-stone-400">
+                        Seat
+                      </th>
+
+                      <th className="px-4 py-3 text-xs font-medium uppercase tracking-wide text-stone-400">
+                        Valid Till
+                      </th>
+
+                      <th className="px-4 py-3 text-xs font-medium uppercase tracking-wide text-stone-400">
+                        Payment
+                      </th>
+
+                      <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-stone-400">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {students.map((student, index) => (
+                      <StudentTableRow
+                        key={student.id}
+                        student={student}
+                        index={(page - 1) * PAGE_SIZE + index + 1}
+                        onView={() => navigate(`/students/${student.id}`)}
+                        onAssignSeat={() =>
+                          navigate(`/seat-map?studentId=${student.id}`)
+                        }
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            {/* =================================================
+                MOBILE / TABLET
+            ================================================= */}
+
+            <div className="grid grid-cols-1 gap-3 lg:hidden">
+              {students.map((student, index) => (
+                <StudentCard
+                  key={student.id}
+                  student={student}
+                  index={(page - 1) * PAGE_SIZE + index + 1}
+                  onView={() => navigate(`/students/${student.id}`)}
+                  onAssignSeat={() =>
+                    navigate(`/seat-map?studentId=${student.id}`)
+                  }
+                />
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* =====================================================
+            PAGINATION
+        ===================================================== */}
+
+        {totalPages > 1 && (
+          <div className="rounded-xl border border-stone-200 bg-white px-4 py-3 shadow-sm sm:px-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-xs text-stone-500">
+                Page{" "}
+                <strong className="font-medium text-stone-700">{page}</strong>{" "}
+                of{" "}
+                <strong className="font-medium text-stone-700">
+                  {totalPages}
+                </strong>
+              </div>
+
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  disabled={page === 1 || isFetching}
+                  onClick={handlePrevious}
+                  className="
+                    inline-flex
+                    h-9
+                    items-center
+                    gap-1.5
+                    rounded-lg
+                    border
+                    border-stone-300
+                    bg-white
+                    px-3
+                    text-xs
+                    font-medium
+                    text-stone-600
+                    transition
+                    hover:bg-stone-50
+                    disabled:cursor-not-allowed
+                    disabled:opacity-40
+                  "
+                >
+                  <ChevronLeftIcon />
+                  Previous
+                </button>
+
+                <button
+                  type="button"
+                  disabled={page === totalPages || isFetching}
+                  onClick={handleNext}
+                  className="
+                    inline-flex
+                    h-9
+                    items-center
+                    gap-1.5
+                    rounded-lg
+                    border
+                    border-stone-300
+                    bg-white
+                    px-3
+                    text-xs
+                    font-medium
+                    text-stone-600
+                    transition
+                    hover:bg-stone-50
+                    disabled:cursor-not-allowed
+                    disabled:opacity-40
+                  "
+                >
+                  Next
+                  <ChevronRightIcon />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   DESKTOP ROW
+========================================================= */
+
+function StudentTableRow({
+  student,
+  index,
+  onView,
+  onAssignSeat,
+}: {
+  student: Student;
+  index: number;
+  onView: () => void;
+  onAssignSeat: () => void;
+}) {
+  const hasMembership =
+    Boolean(student.activeMembership) || Boolean(student.hasActiveMembership);
+
+  const hasSeat = Boolean(student.seat || student.seatDetails?.seatNumber);
+
+  return (
+    <tr className="border-b border-stone-100 last:border-0 hover:bg-stone-50/70">
+      {/* NO */}
+
+      <td className="px-4 py-4 text-xs text-stone-400">{index}</td>
+
+      {/* STUDENT */}
+
+      <td className="px-4 py-4">
+        <button type="button" onClick={onView} className="group text-left">
+          <div className="font-medium text-stone-800 transition group-hover:text-amber-700">
+            {student.name}
+          </div>
+
+          <div className="mt-0.5 text-[11px] text-stone-400">
+            View student profile
+          </div>
+        </button>
+      </td>
+
+      {/* MOBILE */}
+
+      <td className="px-4 py-4 text-stone-600">{student.mobile}</td>
+
+      {/* =====================================================
+          MEMBERSHIP
+      ===================================================== */}
+
+      <td className="px-4 py-4">
+        {hasMembership ? (
+          <div className="space-y-1.5">
+            {/* PLAN + ACTIVE */}
+
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-medium text-stone-800">
+                {student.activeMembership?.plan?.name ?? "Active Membership"}
+              </span>
+
+              <span
+                className="
+                inline-flex
+                items-center
+                rounded-full
+                border
+                border-green-200
+                bg-green-50
+                px-2
+                py-0.5
+                text-[10px]
+                font-medium
+                text-green-700
+              "
+              >
+                Active
+              </span>
+            </div>
+
+            {/* SHIFT */}
+
+            {student.activeMembership?.shift?.name ? (
+              <span
+                className="
+                inline-flex
+                items-center
+                rounded-md
+                border
+                border-stone-200
+                bg-stone-50
+                px-2
+                py-1
+                text-[10px]
+                font-medium
+                text-stone-600
+              "
+              >
+                {student.activeMembership.shift.name}
+              </span>
+            ) : (
+              <span
+                className="
+                inline-flex
+                items-center
+                rounded-md
+                border
+                border-stone-200
+                bg-stone-100
+                px-2
+                py-1
+                text-[10px]
+                font-medium
+                text-stone-400
+              "
+              >
+                Shift not set
+              </span>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            <span
+              className="
+              inline-flex
+              items-center
+              rounded-full
+              border
+              border-red-200
+              bg-red-50
+              px-2.5
+              py-1
+              text-[10px]
+              font-medium
+              text-red-700
+            "
+            >
+              No active membership
+            </span>
+
+            <div className="text-[10px] text-stone-400">
+              Membership required for seat assignment
+            </div>
+          </div>
+        )}
+      </td>
+
+      {/* SEAT */}
+
+      <td className="px-4 py-4">
+        {hasSeat ? (
+          <div>
+            <div className="font-medium text-stone-700">
+              {getSeatLabel(student)}
+            </div>
+
+            {student.seatDetails?.type && (
+              <div className="mt-0.5 text-[10px] uppercase tracking-wide text-stone-400">
+                {student.seatDetails.type}
+              </div>
+            )}
+          </div>
+        ) : (
+          <span className="text-xs text-stone-400">Not assigned</span>
+        )}
+      </td>
+
+      {/* VALID TILL */}
+
+      <td className="px-4 py-4">
+        <span className="text-xs text-stone-600">
+          {student.activeMembership?.endDate
+            ? formatDate(student.activeMembership.endDate)
+            : "—"}
+        </span>
+      </td>
+
+      {/* PAYMENT */}
+
+      <td className="px-4 py-4">
+        <PaymentStatus
+          status={student.paymentStatus}
+          outstanding={student.account?.outstanding}
+        />
+      </td>
+
+      {/* ACTIONS */}
+
+      <td className="px-4 py-4">
+        <div className="flex justify-end gap-2">
+          {!hasSeat && hasMembership && (
+            <button
+              type="button"
+              onClick={onAssignSeat}
+              className="
+                inline-flex
+                items-center
+                gap-1.5
+                rounded-lg
+                border
+                border-blue-200
+                bg-blue-50
+                px-3
+                py-1.5
+                text-xs
+                font-medium
+                text-blue-700
+                transition
+                hover:bg-blue-100
+              "
+            >
+              <SeatIcon />
+              Assign
+            </button>
+          )}
+
           <button
-            disabled={page === 1}
-            onClick={() => setPage((p) => p - 1)}
-            className="px-3 py-1 border rounded disabled:opacity-50"
+            type="button"
+            onClick={onView}
+            className="
+              inline-flex
+              items-center
+              gap-1.5
+              rounded-lg
+              border
+              border-stone-200
+              bg-white
+              px-3
+              py-1.5
+              text-xs
+              font-medium
+              text-stone-600
+              transition
+              hover:bg-stone-50
+            "
           >
-            Prev
-          </button>
-
-          <span className="text-sm">
-            Page {page} of {totalPages}
-          </span>
-
-          <button
-            disabled={page === totalPages}
-            onClick={() => setPage((p) => p + 1)}
-            className="px-3 py-1 border rounded disabled:opacity-50"
-          >
-            Next
+            View
+            <ChevronRightIcon />
           </button>
         </div>
+      </td>
+    </tr>
+  );
+}
+
+/* =========================================================
+   MOBILE CARD
+========================================================= */
+
+function StudentCard({
+  student,
+  index,
+  onView,
+  onAssignSeat,
+}: {
+  student: Student;
+  index: number;
+  onView: () => void;
+  onAssignSeat: () => void;
+}) {
+  const hasMembership =
+    Boolean(student.activeMembership) || Boolean(student.hasActiveMembership);
+
+  const hasSeat = Boolean(student.seat || student.seatDetails?.seatNumber);
+
+  return (
+    <article className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+      {/* HEADER */}
+
+      <div className="flex items-start justify-between gap-3">
+        <button type="button" onClick={onView} className="min-w-0 text-left">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-stone-400">#{index}</span>
+
+            <h2 className="truncate text-sm font-semibold text-stone-800">
+              {student.name}
+            </h2>
+          </div>
+
+          <p className="mt-1 text-xs text-stone-500">{student.mobile}</p>
+        </button>
+
+        <PaymentStatus
+          status={student.paymentStatus}
+          outstanding={student.account?.outstanding}
+          compact
+        />
+      </div>
+
+      {/* INFORMATION */}
+
+      <div className="mt-4 rounded-lg border border-stone-100 bg-stone-50 p-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {/* MEMBERSHIP */}
+
+          <div>
+            <div className="text-[10px] font-medium uppercase tracking-wide text-stone-400">
+              Membership
+            </div>
+
+            {hasMembership ? (
+              <div className="mt-1.5 space-y-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-semibold text-stone-800">
+                    {student.activeMembership?.plan?.name ??
+                      "Active Membership"}
+                  </span>
+
+                  <span
+                    className="
+                    inline-flex
+                    items-center
+                    rounded-full
+                    border
+                    border-green-200
+                    bg-green-50
+                    px-2
+                    py-0.5
+                    text-[9px]
+                    font-medium
+                    text-green-700
+                  "
+                  >
+                    Active
+                  </span>
+                </div>
+
+                {student.activeMembership?.shift?.name ? (
+                  <span
+                    className="
+                    inline-flex
+                    items-center
+                    rounded-md
+                    border
+                    border-stone-200
+                    bg-white
+                    px-2
+                    py-1
+                    text-[10px]
+                    font-medium
+                    text-stone-600
+                  "
+                  >
+                    {student.activeMembership.shift.name}
+                  </span>
+                ) : (
+                  <span
+                    className="
+                    inline-flex
+                    items-center
+                    rounded-md
+                    border
+                    border-stone-200
+                    bg-stone-100
+                    px-2
+                    py-1
+                    text-[10px]
+                    font-medium
+                    text-stone-400
+                  "
+                  >
+                    Shift not set
+                  </span>
+                )}
+              </div>
+            ) : (
+              <div className="mt-1.5">
+                <span
+                  className="
+                  inline-flex
+                  items-center
+                  rounded-full
+                  border
+                  border-red-200
+                  bg-red-50
+                  px-2.5
+                  py-1
+                  text-[10px]
+                  font-medium
+                  text-red-700
+                "
+                >
+                  No active membership
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* SEAT */}
+
+          <div>
+            <div className="text-[10px] font-medium uppercase tracking-wide text-stone-400">
+              Seat
+            </div>
+
+            <div className="mt-1 text-xs font-medium text-stone-700">
+              {hasSeat ? getSeatLabel(student) : "Not assigned"}
+            </div>
+
+            {student.seatDetails?.type && (
+              <div className="mt-0.5 text-[10px] uppercase tracking-wide text-stone-400">
+                {student.seatDetails.type}
+              </div>
+            )}
+          </div>
+
+          {/* VALID TILL */}
+
+          <div>
+            <div className="text-[10px] font-medium uppercase tracking-wide text-stone-400">
+              Valid Till
+            </div>
+
+            <div className="mt-1 text-xs font-medium text-stone-700">
+              {student.activeMembership?.endDate
+                ? formatDate(student.activeMembership.endDate)
+                : "—"}
+            </div>
+          </div>
+
+          {/* OUTSTANDING */}
+
+          <div>
+            <div className="text-[10px] font-medium uppercase tracking-wide text-stone-400">
+              Outstanding
+            </div>
+
+            <div
+              className={`mt-1 text-xs font-semibold ${
+                Number(student.account?.outstanding ?? 0) > 0
+                  ? "text-red-600"
+                  : "text-green-600"
+              }`}
+            >
+              {formatCurrency(student.account?.outstanding)}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ACTIONS */}
+
+      <div className="mt-4 flex gap-2">
+        {!hasSeat && hasMembership && (
+          <button
+            type="button"
+            onClick={onAssignSeat}
+            className="
+              inline-flex
+              flex-1
+              items-center
+              justify-center
+              gap-1.5
+              rounded-lg
+              border
+              border-blue-200
+              bg-blue-50
+              px-3
+              py-2
+              text-xs
+              font-medium
+              text-blue-700
+              transition
+              hover:bg-blue-100
+            "
+          >
+            <SeatIcon />
+            Assign Seat
+          </button>
+        )}
+
+        <button
+          type="button"
+          onClick={onView}
+          className="
+            inline-flex
+            flex-1
+            items-center
+            justify-center
+            gap-1.5
+            rounded-lg
+            border
+            border-stone-200
+            bg-white
+            px-3
+            py-2
+            text-xs
+            font-medium
+            text-stone-600
+            transition
+            hover:bg-stone-50
+          "
+        >
+          View Student
+          <ChevronRightIcon />
+        </button>
+      </div>
+    </article>
+  );
+}
+
+/* =========================================================
+   PAYMENT STATUS
+========================================================= */
+
+function PaymentStatus({
+  status,
+  outstanding,
+  compact = false,
+}: {
+  status?: string;
+  outstanding?: number;
+  compact?: boolean;
+}) {
+  const normalizedStatus = status ?? "YET_TO_PAY";
+
+  const config =
+    normalizedStatus === "PAID"
+      ? {
+          label: "Paid",
+          className: "border-green-200 bg-green-50 text-green-700",
+        }
+      : normalizedStatus === "PARTIAL"
+        ? {
+            label: "Partial",
+            className: "border-amber-200 bg-amber-50 text-amber-700",
+          }
+        : {
+            label: "Yet to Pay",
+            className: "border-red-200 bg-red-50 text-red-700",
+          };
+
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <span
+        className={`
+          inline-flex
+          rounded-full
+          border
+          px-2.5
+          py-1
+          text-[10px]
+          font-medium
+          ${config.className}
+        `}
+      >
+        {config.label}
+      </span>
+
+      {!compact && Number(outstanding ?? 0) > 0 && (
+        <span className="text-[10px] text-stone-400">
+          Due {formatCurrency(outstanding)}
+        </span>
       )}
     </div>
   );
 }
-// import { useQuery, useMutation } from "@tanstack/react-query";
-// import { getStudentsByLimit, createStudent } from "../api/students.api";
-// import { useState, useMemo } from "react";
-// import { toast } from "react-toastify";
-// import { useNavigate } from "react-router-dom";
 
-// const PAGE_SIZE = 10;
+/* =========================================================
+   EMPTY STATE
+========================================================= */
 
-// export default function Students() {
-//   const navigate = useNavigate();
+function EmptyStudentsState({
+  searching,
+  onClearSearch,
+}: {
+  searching: boolean;
+  onClearSearch: () => void;
+}) {
+  return (
+    <section className="rounded-xl border border-stone-200 bg-white p-8 text-center shadow-sm sm:p-12">
+      <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-stone-100 text-stone-500">
+        <StudentIcon />
+      </div>
 
-//   const [name, setName] = useState("");
-//   const [mobile, setMobile] = useState("");
-//   const [search, setSearch] = useState("");
-//   const [page, setPage] = useState(1);
+      <h2 className="mt-4 text-sm font-semibold text-stone-800">
+        {searching ? "No students found" : "No students yet"}
+      </h2>
 
-//   const {
-//     data = [],
-//     refetch,
-//     isLoading,
-//   } = useQuery({
-//     queryKey: ["students", page],
-//     queryFn: () => getStudentsByLimit({ page, limit: PAGE_SIZE }),
-//   });
+      <p className="mx-auto mt-1 max-w-sm text-xs leading-5 text-stone-500">
+        {searching
+          ? "Try a different name or mobile number."
+          : "Add your first student using the form above."}
+      </p>
 
-//   const mutation = useMutation({
-//     mutationFn: createStudent,
-//     onSuccess: () => {
-//       toast.success("Student added successfully");
-//       setName("");
-//       setMobile("");
-//       refetch();
-//     },
-//     onError: (error: any) => {
-//       if (error.response?.status === 409) {
-//         toast.error("Student with this mobile already exists");
-//       } else {
-//         toast.error("Failed to add student");
-//       }
-//     },
-//   });
+      {searching && (
+        <button
+          type="button"
+          onClick={onClearSearch}
+          className="
+            mt-4
+            rounded-lg
+            border
+            border-stone-300
+            bg-white
+            px-4
+            py-2
+            text-xs
+            font-medium
+            text-stone-600
+            transition
+            hover:bg-stone-50
+          "
+        >
+          Clear Search
+        </button>
+      )}
+    </section>
+  );
+}
 
-//   const filteredStudents = useMemo(() => {
-//     if (!search) return data;
-//     const q = search.toLowerCase();
-//     return data.filter(
-//       (s: any) => s.name.toLowerCase().includes(q) || s.mobile.includes(q),
-//     );
-//   }, [data, search]);
+/* =========================================================
+   SKELETON
+========================================================= */
 
-//   const totalPages = Math.ceil(filteredStudents.length / PAGE_SIZE);
+function PageSkeleton() {
+  return (
+    <div className="space-y-5">
+      <div className="space-y-2">
+        <div className="h-7 w-32 animate-pulse rounded bg-stone-200" />
+        <div className="h-4 w-72 animate-pulse rounded bg-stone-200" />
+      </div>
 
-//   const paginatedStudents = useMemo(() => {
-//     const start = (page - 1) * PAGE_SIZE;
-//     return filteredStudents.slice(start, start + PAGE_SIZE);
-//   }, [filteredStudents, page]);
+      <div className="h-32 animate-pulse rounded-xl border border-stone-200 bg-white" />
 
-//   if (isLoading) return <p className="text-sm text-stone-500">Loading…</p>;
+      <div className="h-16 animate-pulse rounded-xl border border-stone-200 bg-white" />
 
-//   return (
-//     <div className="w-full px-6 py-6">
-//       <div className="mx-auto max-w-6xl space-y-6">
-//         {/* HEADER */}
-//         <h1 className="text-lg font-semibold text-stone-800">Students</h1>
+      <div className="h-[420px] animate-pulse rounded-xl border border-stone-200 bg-white" />
+    </div>
+  );
+}
 
-//         {/* ADD STUDENT */}
-//         <form
-//           onSubmit={(e) => {
-//             e.preventDefault();
-//             mutation.mutate({ name, mobile });
-//           }}
-//           className="bg-stone-100/80 border border-stone-200 rounded-2xl p-5 shadow-sm flex gap-3 items-end"
-//         >
-//           <div className="flex-1">
-//             <label className="text-xs text-stone-600">Student Name</label>
-//             <input
-//               className="w-full h-9 rounded-md border border-stone-300 bg-white px-3"
-//               value={name}
-//               onChange={(e) => setName(e.target.value)}
-//               required
-//             />
-//           </div>
+/* =========================================================
+   HELPERS
+========================================================= */
 
-//           <div className="flex-1">
-//             <label className="text-xs text-stone-600">Mobile</label>
-//             <input
-//               className="w-full h-9 rounded-md border border-stone-300 bg-white px-3"
-//               value={mobile}
-//               onChange={(e) => setMobile(e.target.value)}
-//               required
-//             />
-//           </div>
+function getSeatLabel(student: Student) {
+  if (student.seatDetails) {
+    const labName = student.seatDetails.lab?.name;
 
-//           <button
-//             disabled={mutation.isPending}
-//             className="h-9 px-5 rounded-md bg-amber-700 text-white font-medium hover:bg-amber-800 disabled:opacity-50"
-//           >
-//             Add Student
-//           </button>
-//         </form>
+    const seatNumber = student.seatDetails.seatNumber;
 
-//         {/* SEARCH */}
-//         <div className="flex items-center justify-between">
-//           <input
-//             className="w-64 h-9 rounded-md border border-stone-300 bg-white px-3"
-//             placeholder="Search by name or mobile"
-//             value={search}
-//             onChange={(e) => {
-//               setSearch(e.target.value);
-//               setPage(1);
-//             }}
-//           />
+    if (labName && seatNumber !== undefined) {
+      return `${labName} · Seat ${seatNumber}`;
+    }
 
-//           <span className="text-sm text-stone-500">
-//             Showing {paginatedStudents.length} of {filteredStudents.length}
-//           </span>
-//         </div>
+    if (seatNumber !== undefined) {
+      return `Seat ${seatNumber}`;
+    }
+  }
 
-//         {/* TABLE */}
-//         <div className="bg-stone-100/80 border border-stone-200 rounded-2xl shadow-sm overflow-hidden">
-//           <table className="w-full text-sm">
-//             <thead className="bg-stone-200/60 text-stone-700">
-//               <tr>
-//                 <th className="p-3 text-left">Name</th>
-//                 <th className="p-3 text-left">Mobile</th>
-//                 <th className="p-3 text-left">Membership</th>
-//                 <th className="p-3 text-left">Start</th>
-//                 <th className="p-3 text-left">End</th>
-//                 <th className="p-3 text-left">Seat</th>
-//                 <th className="p-3 text-left">Status</th>
-//                 <th className="p-3 text-left">Actions</th>
-//               </tr>
-//             </thead>
+  return student.seat ?? "Assigned";
+}
 
-//             <tbody className="bg-white">
-//               {paginatedStudents.map((s: any) => {
-//                 const m = s.activeMembership;
+function formatCurrency(amount?: number) {
+  return `₹${Number(amount ?? 0).toLocaleString("en-IN")}`;
+}
 
-//                 return (
-//                   <tr
-//                     key={s.id}
-//                     className="border-t hover:bg-amber-50/40 transition"
-//                   >
-//                     <td className="p-3 font-medium text-stone-800">{s.name}</td>
+function formatDate(value?: string | null) {
+  if (!value) return "—";
 
-//                     <td className="p-3 text-stone-600">{s.mobile}</td>
+  const date = new Date(value);
 
-//                     <td className="p-3">
-//                       {m ? (
-//                         <span>
-//                           {m.planName} / {m.shiftName}
-//                         </span>
-//                       ) : (
-//                         <span className="text-red-600">No Membership</span>
-//                       )}
-//                     </td>
+  if (Number.isNaN(date.getTime())) {
+    return "—";
+  }
 
-//                     <td className="p-3 text-stone-600">
-//                       {m ? new Date(m.startDate).toLocaleDateString() : "—"}
-//                     </td>
+  return date.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
 
-//                     <td className="p-3 text-stone-600">
-//                       {m ? new Date(m.endDate).toLocaleDateString() : "—"}
-//                     </td>
+/* =========================================================
+   ICONS
+========================================================= */
 
-//                     <td className="p-3">{s.seat ?? "—"}</td>
+function SearchIcon() {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      className="
+        pointer-events-none
+        absolute
+        left-3
+        top-1/2
+        h-4
+        w-4
+        -translate-y-1/2
+        text-stone-400
+      "
+    >
+      <circle
+        cx="8.5"
+        cy="8.5"
+        r="5.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
 
-//                     <td className="p-3">
-//                       {m ? (
-//                         <span className="px-2 py-1 text-xs rounded bg-green-100 text-green-700">
-//                           Active
-//                         </span>
-//                       ) : (
-//                         <span className="px-2 py-1 text-xs rounded bg-red-100 text-red-700">
-//                           Inactive
-//                         </span>
-//                       )}
-//                     </td>
+      <path
+        d="M13 13l4 4"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
 
-//                     <td className="p-3 flex gap-3">
-//                       <button
-//                         onClick={() => navigate(`/seat-map?studentId=${s.id}`)}
-//                         className="text-amber-700 hover:underline"
-//                       >
-//                         Assign Seat
-//                       </button>
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4">
+      <path
+        d="M5 5l10 10M15 5L5 15"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
 
-//                       <button
-//                         onClick={() => navigate(`/students/${s.id}`)}
-//                         className="text-emerald-700 hover:underline"
-//                       >
-//                         View
-//                       </button>
-//                     </td>
-//                   </tr>
-//                 );
-//               })}
-//             </tbody>
-//           </table>
-//         </div>
+function ChevronLeftIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" className="h-3.5 w-3.5">
+      <path
+        d="M12 5l-5 5 5 5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
-//         {/* PAGINATION */}
-//         {totalPages > 1 && (
-//           <div className="flex justify-center items-center gap-4">
-//             <button
-//               disabled={page === 1}
-//               onClick={() => setPage((p) => p - 1)}
-//               className="h-8 px-3 border rounded-md disabled:opacity-50"
-//             >
-//               Prev
-//             </button>
+function ChevronRightIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" className="h-3.5 w-3.5">
+      <path
+        d="M8 5l5 5-5 5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
-//             <span className="text-sm text-stone-600">
-//               Page {page} of {totalPages}
-//             </span>
+function SeatIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" className="h-3.5 w-3.5">
+      <rect
+        x="4"
+        y="3"
+        width="12"
+        height="8"
+        rx="2"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
 
-//             <button
-//               disabled={page === totalPages}
-//               onClick={() => setPage((p) => p + 1)}
-//               className="h-8 px-3 border rounded-md disabled:opacity-50"
-//             >
-//               Next
-//             </button>
-//           </div>
-//         )}
-//       </div>
-//     </div>
-//   );
-// }
+      <path
+        d="M6 11v4M14 11v4M6 14h8"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function StudentIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" className="h-5 w-5">
+      <circle cx="10" cy="6" r="3" stroke="currentColor" strokeWidth="1.5" />
+
+      <path
+        d="M4.5 17c.5-3 2.3-4.5 5.5-4.5s5 1.5 5.5 4.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}

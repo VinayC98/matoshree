@@ -1461,4 +1461,7 @@ while keeping business rules centralized, secure, and consistent.
 
 ## License
 
-Add the project's chosen license here when one has been formally selected.
+This project is proprietary software. All rights reserved.
+
+The source code is provided for authorized development and maintenance purposes only.
+Unauthorized copying, modification, distribution, or commercial use is prohibited.

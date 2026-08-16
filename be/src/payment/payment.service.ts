@@ -1,10 +1,7 @@
-import {
-  BadRequestException,
-  Injectable,
-  InternalServerErrorException,
-  NotFoundException,
-} from '@nestjs/common';
-import { CreatePaymentDto } from './dto/create-payment.dto.js';
+import { BadRequestException, Injectable } from '@nestjs/common';
+import { Prisma } from '../generated/prisma/client.js';
+
+import { CreatePaymentDto, PaymentType } from './dto/create-payment.dto.js';
 import { AuditService } from '../audit/audit.service.js';
 import { PrismaService } from '../prisma.service.js';
 
@@ -24,129 +21,407 @@ export class PaymentService {
     limit: number;
     paymentType?: string;
   }) {
-    const skip = (page - 1) * limit;
+    const safePage = Math.max(Number(page) || 1, 1);
+    const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 100);
 
-    const where = paymentType ? { paymentType } : undefined;
+    const skip = (safePage - 1) * safeLimit;
+
+    const where = paymentType
+      ? {
+          paymentType,
+        }
+      : undefined;
 
     const [payments, total] = await this.prisma.$transaction([
       this.prisma.payment.findMany({
         skip,
-        take: limit,
+        take: safeLimit,
         where,
-        orderBy: { paidOn: 'desc' },
+        orderBy: {
+          paidOn: 'desc',
+        },
         include: {
           student: {
-            select: { id: true, name: true, mobile: true },
+            select: {
+              id: true,
+              name: true,
+              mobile: true,
+            },
           },
+
           membership: {
             select: {
               id: true,
               startDate: true,
               endDate: true,
+
               membershipPlan: {
-                select: { name: true },
+                select: {
+                  name: true,
+                },
               },
+
               shift: {
-                select: { name: true },
+                select: {
+                  name: true,
+                },
               },
+
               fixedSeat: {
                 select: {
                   seatNumber: true,
                   lab: {
-                    select: { name: true },
+                    select: {
+                      name: true,
+                    },
                   },
+                },
+              },
+            },
+          },
+
+          allocations: {
+            select: {
+              id: true,
+              amount: true,
+              charge: {
+                select: {
+                  id: true,
+                  type: true,
+                  amountDue: true,
+                  periodStart: true,
+                  periodEnd: true,
+                  status: true,
                 },
               },
             },
           },
         },
       }),
-      this.prisma.payment.count({ where }),
+
+      this.prisma.payment.count({
+        where,
+      }),
     ]);
 
     return {
       data: payments,
+
       pagination: {
-        page,
-        limit,
+        page: safePage,
+        limit: safeLimit,
         total,
-        totalPages: Math.ceil(total / limit),
+        totalPages: Math.ceil(total / safeLimit),
       },
     };
   }
 
-  async isCurrentCyclePaid(
-    membershipStart: Date,
-    membershipEnd: Date,
-    payments: { paidOn: Date; paymentType: string }[],
-  ) {
-    const cycleStart = membershipStart;
-    const cycleEnd = membershipEnd;
-
-    return payments.some(
-      (p) =>
-        p.paymentType === 'MONTHLY' &&
-        p.paidOn >= cycleStart &&
-        p.paidOn <= cycleEnd,
-    );
-  }
-
+  /**
+   * Creates a payment and allocates the complete amount
+   * against existing membership charges.
+   *
+   * Important:
+   *
+   * Payment itself is only the money received.
+   *
+   * PaymentAllocation decides which charge that money
+   * actually pays.
+   */
   async createPayment(dto: CreatePaymentDto) {
     return this.prisma.$transaction(async (tx) => {
       const membership = await tx.membership.findUnique({
-        where: { id: dto.membershipId },
-        include: { payments: true },
-      });
-      console.log(membership);
+        where: {
+          id: dto.membershipId,
+        },
 
-      if (!membership || !membership.isActive) {
+        select: {
+          id: true,
+          studentId: true,
+          isActive: true,
+          registrationFee: true,
+          priceSnapshot: true,
+
+          charges: {
+            where: {
+              status: {
+                in: ['PENDING', 'PARTIAL'],
+              },
+            },
+
+            orderBy: [
+              {
+                dueDate: 'asc',
+              },
+              {
+                createdAt: 'asc',
+              },
+            ],
+
+            select: {
+              id: true,
+              type: true,
+              amountDue: true,
+              status: true,
+              dueDate: true,
+              periodStart: true,
+              periodEnd: true,
+
+              allocations: {
+                select: {
+                  amount: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!membership) {
+        throw new BadRequestException('Membership not found');
+      }
+
+      if (!membership.isActive) {
         throw new BadRequestException('Invalid or inactive membership');
       }
 
-      const monthlyFee = membership.priceSnapshot;
-      const registrationFee = membership.registrationFee;
-
-      // =============================
-      // VALIDATE PAYMENT TYPE
-      // =============================
-
-      if (dto.paymentType === 'REGISTRATION') {
-        if (dto.amount !== registrationFee) {
-          throw new BadRequestException('Invalid registration fee amount');
-        }
+      if (!Number.isInteger(dto.amount) || dto.amount <= 0) {
+        throw new BadRequestException(
+          'Payment amount must be greater than zero',
+        );
       }
 
-      if (dto.paymentType === 'MONTHLY') {
-        if (dto.amount < monthlyFee) {
-          throw new BadRequestException('Insufficient monthly payment');
-        }
-
-        const alreadyPaid = await this.isCurrentCyclePaid(
-          membership.startDate,
-          membership.endDate,
-          membership.payments,
+      /*
+       * REGISTRATION PAYMENT
+       *
+       * Registration is allocated only to the
+       * registration charge.
+       */
+      if (dto.paymentType === PaymentType.REGISTRATION) {
+        const registrationCharge = membership.charges.find(
+          (charge) => charge.type === 'REGISTRATION',
         );
 
-        if (alreadyPaid && dto.extendMembership !== true) {
+        if (!registrationCharge) {
+          throw new BadRequestException('Registration charge not found');
+        }
+
+        const registrationPaid = registrationCharge.allocations.reduce(
+          (sum, allocation) => sum + allocation.amount,
+          0,
+        );
+
+        const registrationOutstanding = Math.max(
+          registrationCharge.amountDue - registrationPaid,
+          0,
+        );
+
+        if (registrationOutstanding <= 0) {
           throw new BadRequestException(
-            'Monthly fee already paid for this period. Use ADVANCE or extend membership.',
+            'Registration charge is already fully paid',
           );
         }
+
+        if (dto.amount > registrationOutstanding) {
+          throw new BadRequestException(
+            `Registration outstanding amount is ₹${registrationOutstanding}`,
+          );
+        }
+
+        const payment = await tx.payment.create({
+          data: {
+            membershipId: membership.id,
+            studentId: membership.studentId,
+            amount: dto.amount,
+            paymentMode: dto.paymentMode,
+            paymentType: 'REGISTRATION',
+          },
+        });
+
+        await tx.paymentAllocation.create({
+          data: {
+            paymentId: payment.id,
+            chargeId: registrationCharge.id,
+            amount: dto.amount,
+          },
+        });
+
+        await this.updateChargeStatus(
+          tx,
+          registrationCharge.id,
+          registrationCharge.amountDue,
+          registrationPaid + dto.amount,
+        );
+
+        await this.auditService.log({
+          action: 'CREATE_PAYMENT',
+          entity: 'Payment',
+          entityId: payment.id,
+          actorId: '',
+          actorName: 'Admin',
+          actorRole: 'ADMIN',
+          description: 'Registration payment recorded',
+          meta: {
+            paymentId: payment.id,
+            membershipId: membership.id,
+            amount: dto.amount,
+            paymentType: 'REGISTRATION',
+            allocatedAmount: dto.amount,
+          },
+        });
+
+        return {
+          payment,
+          allocations: [
+            {
+              chargeId: registrationCharge.id,
+              amount: dto.amount,
+            },
+          ],
+        };
       }
 
-      // =============================
-      // CREATE PAYMENT (NO SIDE EFFECT)
-      // =============================
+      /*
+       * MEMBERSHIP PAYMENT
+       *
+       * MONTHLY / PARTIAL / ADVANCE all use the
+       * same accounting mechanism.
+       *
+       * The payment is allocated chronologically
+       * across outstanding membership charges.
+       */
+      const membershipCharges = membership.charges.filter(
+        (charge) => charge.type === 'MEMBERSHIP',
+      );
 
+      if (membershipCharges.length === 0) {
+        throw new BadRequestException(
+          'No outstanding membership charges found',
+        );
+      }
+
+      const chargesWithOutstanding = membershipCharges
+        .map((charge) => {
+          const paid = charge.allocations.reduce(
+            (sum, allocation) => sum + allocation.amount,
+            0,
+          );
+
+          const outstanding = Math.max(charge.amountDue - paid, 0);
+
+          return {
+            ...charge,
+            amountPaid: paid,
+            outstanding,
+          };
+        })
+        .filter((charge) => charge.outstanding > 0);
+
+      if (chargesWithOutstanding.length === 0) {
+        throw new BadRequestException(
+          'All membership charges are already fully paid',
+        );
+      }
+
+      const totalOutstanding = chargesWithOutstanding.reduce(
+        (sum, charge) => sum + charge.outstanding,
+        0,
+      );
+
+      /*
+       * Never allow money to disappear.
+       *
+       * If the user wants to pay more than all
+       * currently outstanding charges, reject it.
+       */
+      if (dto.amount > totalOutstanding) {
+        throw new BadRequestException(
+          `Maximum outstanding amount is ₹${totalOutstanding}`,
+        );
+      }
+
+      /*
+       * Create the payment first.
+       *
+       * Existing database convention is kept:
+       *
+       * REGISTRATION
+       * MEMBERSHIP_PAYMENT
+       */
       const payment = await tx.payment.create({
         data: {
           membershipId: membership.id,
           studentId: membership.studentId,
           amount: dto.amount,
           paymentMode: dto.paymentMode,
-          paymentType: dto.paymentType,
+          paymentType: 'MEMBERSHIP_PAYMENT',
         },
       });
+
+      let remainingAmount = dto.amount;
+
+      const allocations: Array<{
+        chargeId: string;
+        amount: number;
+      }> = [];
+
+      /*
+       * Allocate oldest outstanding charge first.
+       *
+       * Example:
+       *
+       * Charge 1 outstanding = ₹200
+       * Charge 2 outstanding = ₹350
+       *
+       * Payment = ₹400
+       *
+       * Allocation:
+       * Charge 1 = ₹200
+       * Charge 2 = ₹200
+       */
+      for (const charge of chargesWithOutstanding) {
+        if (remainingAmount <= 0) {
+          break;
+        }
+
+        const allocationAmount = Math.min(remainingAmount, charge.outstanding);
+
+        await tx.paymentAllocation.create({
+          data: {
+            paymentId: payment.id,
+            chargeId: charge.id,
+            amount: allocationAmount,
+          },
+        });
+
+        const newPaidAmount = charge.amountPaid + allocationAmount;
+
+        await this.updateChargeStatus(
+          tx,
+          charge.id,
+          charge.amountDue,
+          newPaidAmount,
+        );
+
+        allocations.push({
+          chargeId: charge.id,
+          amount: allocationAmount,
+        });
+
+        remainingAmount -= allocationAmount;
+      }
+
+      /*
+       * This should never happen because we validate
+       * totalOutstanding above.
+       *
+       * Keep this guard so the transaction cannot
+       * accidentally create an under-allocated payment.
+       */
+      if (remainingAmount !== 0) {
+        throw new BadRequestException(
+          'Payment could not be completely allocated',
+        );
+      }
 
       await this.auditService.log({
         action: 'CREATE_PAYMENT',
@@ -155,217 +430,64 @@ export class PaymentService {
         actorId: '',
         actorName: 'Admin',
         actorRole: 'ADMIN',
-        description: 'Payment recorded',
-        meta: { payment },
+        description: 'Membership payment recorded',
+        meta: {
+          paymentId: payment.id,
+          membershipId: membership.id,
+          amount: dto.amount,
+          paymentType: 'MEMBERSHIP_PAYMENT',
+          allocations,
+        },
       });
 
-      // =============================
-      // EXPLICIT EXTENSION ONLY
-      // =============================
-
+      /*
+       * Do NOT extend membership.endDate here.
+       *
+       * Membership duration is managed by the
+       * membership / renewal flow.
+       *
+       * Payment recording should only record
+       * money and allocate it to charges.
+       */
       if (dto.extendMembership === true) {
-        if (!dto.extendMonths || dto.extendMonths < 1) {
-          throw new BadRequestException('Invalid extension duration');
-        }
-
-        const oldEndDate = membership.endDate;
-        const newEndDate = new Date(
-          oldEndDate.getTime() + dto.extendMonths * 30 * 24 * 60 * 60 * 1000,
+        throw new BadRequestException(
+          'Membership extension must be handled through membership renewal',
         );
-
-        await tx.membership.update({
-          where: { id: membership.id },
-          data: { endDate: newEndDate },
-        });
-
-        await this.auditService.log({
-          action: 'EXTEND_MEMBERSHIP',
-          entity: 'Membership',
-          entityId: membership.id,
-          actorId: '',
-          actorName: 'Admin',
-          actorRole: 'ADMIN',
-          description: `Membership extended by ${dto.extendMonths} month(s)`,
-          meta: {
-            oldEndDate,
-            newEndDate,
-            paymentId: payment.id,
-          },
-        });
       }
 
-      return payment;
+      return {
+        payment,
+        allocations,
+      };
     });
   }
+
   /**
-   * Record a payment (registration or monthly)
+   * Updates MembershipCharge status after allocation.
    */
-  // async createPayment(dto: CreatePaymentDto) {
-  //   return this.prisma.$transaction(async (tx) => {
-  //     const membership = await tx.membership.findUnique({
-  //       where: { id: dto.membershipId },
-  //     });
+  private async updateChargeStatus(
+    tx: Prisma.TransactionClient,
+    chargeId: string,
+    amountDue: number,
+    amountPaid: number,
+  ) {
+    let status: 'PENDING' | 'PARTIAL' | 'PAID';
 
-  //     if (!membership || !membership.isActive) {
-  //       throw new BadRequestException('Invalid or inactive membership');
-  //     }
+    if (amountPaid <= 0) {
+      status = 'PENDING';
+    } else if (amountPaid < amountDue) {
+      status = 'PARTIAL';
+    } else {
+      status = 'PAID';
+    }
 
-  //     // Backward compatibility
-  //     const paymentType = dto.isRegistrationFee === true ? 'REGISTRATION' : dto.paymentType;
-
-  //     const monthlyFee = membership.priceSnapshot;
-  //     const registrationFee = membership.registrationFee;
-  //     const billingDays = 30; // your system standard
-
-  //     let extendDays = 0;
-
-  //     switch (paymentType) {
-  //       case 'REGISTRATION':
-  //         if (dto.amount !== registrationFee) {
-  //           throw new BadRequestException('Invalid registration fee amount');
-  //         }
-  //         break;
-
-  //       case 'MONTHLY':
-  //         if (dto.amount < monthlyFee) {
-  //           throw new BadRequestException('Insufficient monthly payment');
-  //         }
-  //         extendDays = billingDays;
-  //         break;
-
-  //       case 'ADVANCE':
-  //         extendDays = Math.floor(dto.amount / monthlyFee) * billingDays;
-  //         if (extendDays === 0) {
-  //           throw new BadRequestException('Advance amount too low');
-  //         }
-  //         break;
-
-  //       case 'PARTIAL':
-  //         // no extension
-  //         break;
-  //     }
-
-  //     const payment = await tx.payment.create({
-  //       data: {
-  //         membershipId: membership.id,
-  //         studentId: membership.studentId,
-  //         amount: dto.amount,
-  //         paymentMode: dto.paymentMode,
-  //         paymentType,
-  //       },
-  //     });
-
-  //     payment &&
-  //       /* AUDIT LOG (✅ NOW REACHABLE) */
-  //       (await this.auditService.log({
-  //         action: 'CREATE_PAYMENT',
-  //         entity: 'Payment',
-  //         entityId: membership.studentId,
-  //         actorId: '',
-  //         actorName: 'Admin',
-  //         actorRole: 'ADMIN',
-  //         description: `Payment Created Successfully.`,
-  //         meta: {
-  //           PaymentInfo: payment,
-  //         },
-  //       }));
-
-  //     if (extendDays > 0) {
-  //       await tx.membership.update({
-  //         where: { id: membership.id },
-  //         data: {
-  //           endDate: new Date(membership.endDate.getTime() + extendDays * 24 * 60 * 60 * 1000),
-  //         },
-  //       });
-  //     }
-
-  //     return payment;
-  //   });
-  // }
-
-  // async createPayment(dto: CreatePaymentDto) {
-  //   return this.prisma.$transaction(async (tx) => {
-  //     const membership = await tx.membership.findUnique({
-  //       where: { id: dto.membershipId },
-  //     });
-
-  //     if (!membership || !membership.isActive) {
-  //       throw new BadRequestException('Invalid or inactive membership');
-  //     }
-
-  //     const paymentType = dto.isRegistrationFee === true ? 'REGISTRATION' : dto.paymentType;
-
-  //     // ===== VALIDATIONS ONLY =====
-
-  //     if (paymentType === 'REGISTRATION') {
-  //       if (dto.amount !== membership.registrationFee) {
-  //         throw new BadRequestException('Invalid registration fee amount');
-  //       }
-  //     }
-
-  //     if (paymentType === 'MONTHLY') {
-  //       if (dto.amount < membership.priceSnapshot) {
-  //         throw new BadRequestException('Insufficient monthly payment');
-  //       }
-  //     }
-
-  //     // ===== CREATE PAYMENT (NO SIDE EFFECTS) =====
-
-  //     const payment = await tx.payment.create({
-  //       data: {
-  //         membershipId: membership.id,
-  //         studentId: membership.studentId,
-  //         amount: dto.amount,
-  //         paymentMode: dto.paymentMode,
-  //         paymentType,
-  //       },
-  //     });
-
-  //     await this.auditService.log({
-  //       action: 'CREATE_PAYMENT',
-  //       entity: 'Payment',
-  //       entityId: payment.id,
-  //       actorId: '',
-  //       actorName: 'Admin',
-  //       actorRole: 'ADMIN',
-  //       description: 'Payment recorded',
-  //       meta: { payment },
-  //     });
-
-  //     // ===== EXPLICIT EXTENSION ONLY =====
-
-  //     if (dto.extendMembership === true) {
-  //       if (!dto.extendMonths || dto.extendMonths < 1) {
-  //         throw new BadRequestException('Invalid extension duration');
-  //       }
-
-  //       const oldEndDate = membership.endDate;
-  //       const newEndDate = new Date(
-  //         oldEndDate.getTime() + dto.extendMonths * 30 * 24 * 60 * 60 * 1000,
-  //       );
-
-  //       await tx.membership.update({
-  //         where: { id: membership.id },
-  //         data: { endDate: newEndDate },
-  //       });
-
-  //       await this.auditService.log({
-  //         action: 'EXTEND_MEMBERSHIP',
-  //         entity: 'Membership',
-  //         entityId: membership.id,
-  //         actorId: '',
-  //         actorName: 'Admin',
-  //         actorRole: 'ADMIN',
-  //         description: `Membership extended by ${dto.extendMonths} month(s)`,
-  //         meta: {
-  //           oldEndDate,
-  //           newEndDate,
-  //           paymentId: payment.id,
-  //         },
-  //       });
-  //     }
-
-  //     return payment;
-  //   });
-  // }
+    await tx.membershipCharge.update({
+      where: {
+        id: chargeId,
+      },
+      data: {
+        status,
+      },
+    });
+  }
 }

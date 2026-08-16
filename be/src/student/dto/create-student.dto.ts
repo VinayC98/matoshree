@@ -9,7 +9,7 @@ export class CreateStudentDto {
   @IsString()
   @IsNotEmpty()
   @Length(2, 100)
-  name: string;
+  name!: string;
 
   @ApiProperty({
     example: '9876543210',
@@ -19,5 +19,5 @@ export class CreateStudentDto {
   @Matches(/^[6-9]\d{9}$/, {
     message: 'Mobile number must be a valid 10-digit Indian number',
   })
-  mobile: string;
+  mobile!: string;
 }

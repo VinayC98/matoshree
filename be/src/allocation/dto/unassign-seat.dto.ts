@@ -4,13 +4,13 @@ import { IsDateString, IsUUID } from 'class-validator';
 export class UnassignSeatDto {
   @ApiProperty({ example: '2025-01-23' })
   @IsDateString()
-  date: string;
+  date!: string;
 
   @ApiProperty()
   @IsUUID()
-  shiftId: string;
+  shiftId!: string;
 
   @ApiProperty()
   @IsUUID()
-  seatId: string;
+  seatId!: string;
 }

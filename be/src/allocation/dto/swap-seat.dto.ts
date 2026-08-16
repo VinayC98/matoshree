@@ -4,25 +4,25 @@ import { IsDateString, IsUUID } from 'class-validator';
 export class SwapDailySeatDto {
   @ApiProperty({ example: '2025-01-23' })
   @IsDateString()
-  date: string;
+  date!: string;
 
   @ApiProperty()
   @IsUUID()
-  shiftId: string;
+  shiftId!: string;
 
   @ApiProperty()
   @IsUUID()
-  seatIdA: string;
+  seatIdA!: string;
 
   @ApiProperty()
   @IsUUID()
-  seatIdB: string;
+  seatIdB!: string;
 }
 
 export class SwapFixedSeatDto {
   @IsUUID()
-  studentId: string;
+  studentId!: string;
 
   @IsUUID()
-  newSeatId: string;
+  newSeatId!: string;
 }

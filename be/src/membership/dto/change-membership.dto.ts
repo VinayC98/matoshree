@@ -1,14 +1,15 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
-  IsUUID,
-  IsOptional,
   IsDateString,
-  IsString,
-  Min,
   IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Min,
 } from 'class-validator';
 
-export class CreateMembershipDto {
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+export class ChangeMembershipDto {
   @ApiProperty({
     description: 'Student ID',
   })
@@ -16,34 +17,35 @@ export class CreateMembershipDto {
   studentId!: string;
 
   @ApiProperty({
-    description: 'Membership Plan ID',
+    description: 'New membership plan ID',
   })
   @IsUUID()
   membershipPlanId!: string;
 
   @ApiProperty({
-    description: 'Shift ID',
+    description: 'New shift ID',
   })
   @IsUUID()
   shiftId!: string;
 
   @ApiPropertyOptional({
-    description: 'Fixed Seat ID, required only for fixed seat plans',
+    description:
+      'New fixed seat ID. Required when changing to a fixed-seat plan.',
   })
   @IsOptional()
   @IsUUID()
   fixedSeatId!: string;
 
   @ApiProperty({
-    description: 'Membership start date',
-    example: '2026-08-09',
+    description: 'Date on which the membership change takes effect.',
+    example: '2026-08-10',
   })
   @IsDateString()
   startDate!: string;
 
   @ApiPropertyOptional({
-    description: 'Amount paid at the time of creating the membership',
-    example: 400,
+    description: 'Amount paid at the time of changing membership.',
+    example: 350,
     minimum: 0,
   })
   @IsOptional()

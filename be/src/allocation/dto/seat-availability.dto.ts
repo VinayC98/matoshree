@@ -8,9 +8,9 @@ export class SeatAvailabilityDto {
   })
   @IsOptional()
   @IsDateString()
-  date?: string;
+  date!: string;
 
   @ApiProperty()
   @IsUUID()
-  shiftId: string;
+  shiftId!: string;
 }

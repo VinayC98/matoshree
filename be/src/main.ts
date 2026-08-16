@@ -6,7 +6,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // ✅ Global validation
+  // Global validation
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true, // strips unknown fields
@@ -44,4 +44,7 @@ async function bootstrap() {
 
   await app.listen(process.env.PORT ?? 3000);
 }
-bootstrap();
+bootstrap().catch((error: unknown) => {
+  console.error('Application failed to start:', error);
+  process.exit(1);
+});

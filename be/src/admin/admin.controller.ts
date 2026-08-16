@@ -1,14 +1,25 @@
-import { UseGuards, Controller, Get, Req } from '@nestjs/common';
+import { Controller, Get, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import type { Request } from 'express';
+
 import { AdminGuard } from '../auth/admin.guard.js';
 import { AdminService } from './admin.service.js';
+
+interface AuthenticatedUser {
+  sub: string;
+  email: string;
+}
+
+type AuthenticatedRequest = Request & {
+  user: AuthenticatedUser;
+};
 
 @ApiBearerAuth()
 @UseGuards(AdminGuard)
 @ApiTags('Admin')
 @Controller('admin')
 export class AdminController {
-  constructor(private adminService: AdminService) {}
+  constructor(private readonly adminService: AdminService) {}
 
   @Get('dashboard')
   dashboard() {
@@ -16,15 +27,7 @@ export class AdminController {
   }
 
   @Get('debug')
-  @UseGuards(AdminGuard)
-  debug(@Req() req) {
+  debug(@Req() req: AuthenticatedRequest): AuthenticatedUser {
     return req.user;
   }
-
-  // @Get('audit-logs')
-  // @UseGuards(AdminGuard)
-  // @ApiBearerAuth('jwt-auth')
-  // getLogs() {
-  //   return this.adminService.getAuditLogs();
-  // }
 }

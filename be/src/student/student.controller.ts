@@ -14,11 +14,19 @@ export class StudentController {
     return this.studentService.createStudent(dto);
   }
 
-  // @Get()
-  // @ApiOkResponse({ description: 'List of students' })
-  // async findAll() {
-  //   return this.studentService.getAllStudents();
-  // }
+  @Get('options')
+  async getStudentOptions(
+    @Query('search') search = '',
+    @Query('limit') limit = '10',
+    @Query('hasActiveMembership')
+    hasActiveMembership?: string,
+  ) {
+    return this.studentService.searchStudentOptions({
+      search,
+      limit,
+      hasActiveMembership,
+    });
+  }
 
   @Get(':id')
   @ApiOkResponse({ description: 'Student details' })
@@ -27,9 +35,12 @@ export class StudentController {
   }
 
   @Get()
-  async getStudents(@Query('page') page = '1', @Query('limit') limit = '20') {
-    console.log('something');
-    return this.studentService.getLatestStudents(page, limit);
+  async getStudents(
+    @Query('page') page = '1',
+    @Query('limit') limit = '10',
+    @Query('search') search = '',
+  ) {
+    return this.studentService.getStudents(page, limit, search);
   }
 
   @Get(':id/details')

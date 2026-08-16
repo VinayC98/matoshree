@@ -1,77 +1,96 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+
 import { ApiBearerAuth, ApiCreatedResponse, ApiTags } from '@nestjs/swagger';
+
 import { AllocationService } from './allocation.service.js';
+
 import { RunAllocationDto } from './dto/run-allocation.dto.js';
-import { UseGuards } from '@nestjs/common';
-import { AdminGuard } from '../auth/admin.guard.js';
 import { AssignSeatDto } from './dto/assign-seat.dto.js';
 import { SeatAvailabilityDto } from './dto/seat-availability.dto.js';
 import { UnassignSeatDto } from './dto/unassign-seat.dto.js';
 import { SwapDailySeatDto, SwapFixedSeatDto } from './dto/swap-seat.dto.js';
+
+import { AdminGuard } from '../auth/admin.guard.js';
 
 @ApiTags('Seat Allocation')
 @Controller('allocations')
 export class AllocationController {
   constructor(private readonly allocationService: AllocationService) {}
 
-  /**
-   * POST /allocations/run
-   */
-
+  @Get()
   @ApiBearerAuth()
   @UseGuards(AdminGuard)
+  async getAllocations(
+    @Query('date') date: string,
+    @Query('shiftId') shiftId: string,
+  ) {
+    return this.allocationService.getAllocations(date, shiftId);
+  }
+
+  @Get('seat-map')
+  @ApiBearerAuth()
+  @UseGuards(AdminGuard)
+  async seatMap(
+    @Query('date') date: string,
+    @Query('shiftId') shiftId: string,
+  ) {
+    return this.allocationService.seatMap(date, shiftId);
+  }
+
+  @Get('available-seats')
+  @ApiBearerAuth()
+  @UseGuards(AdminGuard)
+  async availableSeats(@Query() query: SeatAvailabilityDto) {
+    return this.allocationService.availableSeats(query);
+  }
+
   @Post('run')
-  @ApiCreatedResponse({ description: 'Seat allocation executed' })
+  @ApiBearerAuth()
+  @UseGuards(AdminGuard)
+  @ApiCreatedResponse({
+    description: 'Seat allocation executed successfully',
+  })
   async run(@Body() dto: RunAllocationDto) {
     return this.allocationService.runAllocation(dto);
   }
 
-  // View who sits where (list)
-  @Get()
-  getAllocations(@Query('date') date: string, @Query('shiftId') shiftId: string) {
-    return this.allocationService.getAllocations(date, shiftId);
-  }
-
-  /**
-   * GET /allocations/seat-map?date=&shiftId=
-   */
-  @Get('seat-map')
-  seatMap(@Query('date') date: string, @Query('shiftId') shiftId: string) {
-    return this.allocationService.seatMap(date, shiftId);
-  }
-
   @Post('assign')
+  @ApiBearerAuth()
   @UseGuards(AdminGuard)
-  @ApiBearerAuth('jwt-auth')
-  assign(@Body() dto: AssignSeatDto) {
+  @ApiCreatedResponse({
+    description: 'Seat assigned successfully',
+  })
+  async assign(@Body() dto: AssignSeatDto) {
     return this.allocationService.assignSeat(dto);
   }
 
-  @Get('available-seats')
-  @UseGuards(AdminGuard)
-  @ApiBearerAuth('jwt-auth')
-  availableSeats(@Query() query: SeatAvailabilityDto) {
-    return this.allocationService.availableSeats(query);
-  }
-
   @Post('unassign')
+  @ApiBearerAuth()
   @UseGuards(AdminGuard)
-  @ApiBearerAuth('jwt-auth')
-  unassign(@Body() dto: UnassignSeatDto) {
+  @ApiCreatedResponse({
+    description: 'Seat unassigned successfully',
+  })
+  async unassign(@Body() dto: UnassignSeatDto) {
     return this.allocationService.unassignSeat(dto);
   }
 
   @Post('swap-daily')
+  @ApiBearerAuth()
   @UseGuards(AdminGuard)
-  @ApiBearerAuth('jwt-auth')
-  swap(@Body() dto: SwapDailySeatDto) {
+  @ApiCreatedResponse({
+    description: 'Daily seats swapped successfully',
+  })
+  async swapDaily(@Body() dto: SwapDailySeatDto) {
     return this.allocationService.swapDailySeats(dto);
   }
 
   @Post('swap-fixed')
+  @ApiBearerAuth()
   @UseGuards(AdminGuard)
-  @ApiBearerAuth('jwt-auth')
-  swapFixed(@Body() dto: SwapFixedSeatDto) {
+  @ApiCreatedResponse({
+    description: 'Fixed seat swapped successfully',
+  })
+  async swapFixed(@Body() dto: SwapFixedSeatDto) {
     return this.allocationService.swapFixedSeat(dto);
   }
 }

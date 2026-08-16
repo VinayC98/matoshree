@@ -36,7 +36,10 @@ export class ConfigController {
    */
   @Get('pricing/preview')
   @ApiOkResponse({ description: 'Pricing preview for plan and shift' })
-  async getPricingPreview(@Query('planId') planId: string, @Query('shiftId') shiftId: string) {
+  async getPricingPreview(
+    @Query('planId') planId: string,
+    @Query('shiftId') shiftId: string,
+  ) {
     return this.configService.getPricingPreview(planId, shiftId);
   }
 }

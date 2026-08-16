@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
+
 import { PrismaService } from '../prisma.service.js';
 
-type AuditPayload = {
+export type AuditPayload = {
   action: string;
   entity: string;
   entityId: string;
@@ -14,7 +15,7 @@ type AuditPayload = {
 
 @Injectable()
 export class AuditService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async log(payload: AuditPayload) {
     return this.prisma.auditLog.create({

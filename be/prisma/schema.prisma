@@ -13,57 +13,74 @@ datasource db {
   provider = "postgresql"
 }
 
+enum ChargeType {
+  REGISTRATION
+  MEMBERSHIP
+}
+
+enum ChargeStatus {
+  PENDING
+  PARTIAL
+  PAID
+  CANCELLED
+}
+
 model User {
-  id    Int     @id @default(autoincrement())
-  email String  @unique
+  id       Int     @id @default(autoincrement())
+  email    String  @unique
   password String
-  name  String?
+  name     String?
 }
 
 model Lab {
-  id           String   @id @default(uuid()) @db.Uuid
-  name         String
-  totalSeats   Int
-  seats        Seat[]
-  allocations  DailySeatAllocation[]
+  id          String                @id @default(uuid()) @db.Uuid
+  name        String
+  totalSeats  Int
+  seats       Seat[]
+  allocations DailySeatAllocation[]
 }
 
 model Seat {
-  id            String   @id @default(uuid()) @db.Uuid
+  id            String                @id @default(uuid()) @db.Uuid
   seatNumber    Int
-  isFixedLocked Boolean  @default(false)
-  labId         String   @db.Uuid
-  lab           Lab      @relation(fields: [labId], references: [id])
+  isFixedLocked Boolean               @default(false)
+  labId         String                @db.Uuid
+  lab           Lab                   @relation(fields: [labId], references: [id])
   allocations   DailySeatAllocation[]
   memberships   Membership[]
 }
 
 model Student {
-  id          String   @id @default(uuid()) @db.Uuid
+  id          String                @id @default(uuid()) @db.Uuid
   name        String
-  mobile      String   @unique
-  createdAt   DateTime @default(now())
+  mobile      String                @unique
+  createdAt   DateTime              @default(now())
   memberships Membership[]
   allocations DailySeatAllocation[]
   payments    Payment[]
 }
 
 model Membership {
-  id                String   @id @default(uuid()) @db.Uuid
-  studentId         String   @db.Uuid
-  student           Student  @relation(fields: [studentId], references: [id])
-  membershipPlanId  String   @db.Uuid
-  membershipPlan    MembershipPlan @relation(fields: [membershipPlanId], references: [id])
-  shiftId           String   @db.Uuid
-  shift             Shift    @relation(fields: [shiftId], references: [id])
-  fixedSeatId       String?  @db.Uuid
-  fixedSeat         Seat?    @relation(fields: [fixedSeatId], references: [id])
-  startDate         DateTime
-  endDate           DateTime
-  priceSnapshot     Int
-  registrationFee   Int
-  isActive          Boolean  @default(true)
-  payments          Payment[]
+  id               String             @id @default(uuid()) @db.Uuid
+  studentId        String             @db.Uuid
+  student          Student            @relation(fields: [studentId], references: [id])
+  membershipPlanId String             @db.Uuid
+  membershipPlan   MembershipPlan     @relation(fields: [membershipPlanId], references: [id])
+  shiftId          String             @db.Uuid
+  shift            Shift              @relation(fields: [shiftId], references: [id])
+  fixedSeatId      String?            @db.Uuid
+  fixedSeat        Seat?              @relation(fields: [fixedSeatId], references: [id])
+  startDate        DateTime
+  endDate          DateTime
+  priceSnapshot    Int
+  registrationFee  Int
+  isActive         Boolean            @default(true)
+  payments         Payment[]
+  charges          MembershipCharge[]
+
+  @@index([studentId])
+  @@index([studentId, isActive])
+  @@index([endDate])
 }
 
 model DailySeatAllocation {
@@ -77,56 +94,62 @@ model DailySeatAllocation {
   lab       Lab      @relation(fields: [labId], references: [id])
   shiftId   String   @db.Uuid
   shift     Shift    @relation(fields: [shiftId], references: [id])
+
   // Seat cannot be double-booked
   @@unique([date, shiftId, seatId], name: "unique_seat_allocation")
 }
 
 model Payment {
-  id                String   @id @default(uuid()) @db.Uuid
-  membershipId      String   @db.Uuid
-  studentId         String   @db.Uuid
-  amount            Int
-  paymentMode       String
-  paymentType       String
-  paidOn            DateTime @default(now())
-  membership        Membership @relation(fields: [membershipId], references: [id])
-  student           Student    @relation(fields: [studentId], references: [id])
+  id           String              @id @default(uuid()) @db.Uuid
+  membershipId String              @db.Uuid
+  studentId    String              @db.Uuid
+  amount       Int
+  paymentMode  String
+  paymentType  String
+  paidOn       DateTime            @default(now())
+  membership   Membership          @relation(fields: [membershipId], references: [id])
+  student      Student             @relation(fields: [studentId], references: [id])
+  allocations  PaymentAllocation[]
+
+  @@index([membershipId])
+  @@index([studentId])
+  @@index([paidOn])
 }
 
 model Shift {
-  id        String   @id @default(uuid()) @db.Uuid
-  code      String   @unique   // FULL_DAY, MORNING, EVENING
-  name      String
-  startTime String   // "07:00"
-  endTime   String   // "23:00"
-  isActive  Boolean  @default(true)
+  id          String                @id @default(uuid()) @db.Uuid
+  code        String                @unique // FULL_DAY, MORNING, EVENING
+  name        String
+  startTime   String // "07:00"
+  endTime     String // "23:00"
+  isActive    Boolean               @default(true)
   memberships Membership[]
   pricing     Pricing[]
   allocations DailySeatAllocation[]
 }
 
 model MembershipPlan {
-  id                  String   @id @default(uuid()) @db.Uuid
-  code                String   @unique   // FIXED, FULL, HALF
+  id                  String       @id @default(uuid()) @db.Uuid
+  code                String       @unique // FIXED, FULL, HALF
   name                String
   requiresFixedSeat   Boolean
   isSeatDailyAssigned Boolean
-  isActive            Boolean  @default(true)
-  memberships Membership[]
-  pricing     Pricing[]
+  isActive            Boolean      @default(true)
+  memberships         Membership[]
+  pricing             Pricing[]
 }
 
 model Pricing {
-  id               String   @id @default(uuid()) @db.Uuid
-  membershipPlanId String   @db.Uuid
+  id               String         @id @default(uuid()) @db.Uuid
+  membershipPlanId String         @db.Uuid
   membershipPlan   MembershipPlan @relation(fields: [membershipPlanId], references: [id])
-  shiftId          String?  @db.Uuid
-  shift            Shift?   @relation(fields: [shiftId], references: [id])
+  shiftId          String?        @db.Uuid
+  shift            Shift?         @relation(fields: [shiftId], references: [id])
   monthlyFee       Int
   registrationFee  Int
-  billingCycleDays Int      @default(30)
-  isActive         Boolean  @default(true)
-  effectiveFrom    DateTime @default(now())
+  billingCycleDays Int            @default(30)
+  isActive         Boolean        @default(true)
+  effectiveFrom    DateTime       @default(now())
 }
 
 model AuditLog {
@@ -136,4 +159,35 @@ model AuditLog {
   entityId  String
   meta      Json?
   createdAt DateTime @default(now())
+}
+
+model MembershipCharge {
+  id           String              @id @default(uuid()) @db.Uuid
+  membershipId String              @db.Uuid
+  membership   Membership          @relation(fields: [membershipId], references: [id])
+  type         ChargeType
+  amountDue    Int
+  periodStart  DateTime?
+  periodEnd    DateTime?
+  dueDate      DateTime
+  status       ChargeStatus        @default(PENDING)
+  createdAt    DateTime            @default(now())
+  allocations  PaymentAllocation[]
+
+  @@index([membershipId])
+  @@index([status])
+  @@index([dueDate])
+}
+
+model PaymentAllocation {
+  id        String           @id @default(uuid()) @db.Uuid
+  paymentId String           @db.Uuid
+  payment   Payment          @relation(fields: [paymentId], references: [id])
+  chargeId  String           @db.Uuid
+  charge    MembershipCharge @relation(fields: [chargeId], references: [id])
+  amount    Int
+  createdAt DateTime         @default(now())
+
+  @@index([paymentId])
+  @@index([chargeId])
 }

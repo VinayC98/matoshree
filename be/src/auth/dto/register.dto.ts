@@ -5,14 +5,19 @@ export class RegisterDto {
   @ApiProperty({ example: 'Admin User' })
   @IsString()
   @IsNotEmpty()
-  name: string;
+  name!: string;
 
   @ApiProperty({ example: 'admin@studylab.com' })
   @IsEmail()
-  email: string;
+  email!: string;
 
   @ApiProperty({ example: 'Admin@123' })
   @IsString()
   @MinLength(6)
-  password: string;
+  password!: string;
+
+  @ApiProperty({ example: 'sample-123' })
+  @IsString()
+  @IsNotEmpty()
+  registrationCode!: string;
 }

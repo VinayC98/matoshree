@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { StudentModule } from './student/student.module.js';
 
 import { MembershipModule } from './membership/membership.module.js';
@@ -24,9 +24,15 @@ import { ScheduleModule } from '@nestjs/schedule';
 @Module({
   imports: [
     PassportModule,
-    JwtModule.register({
-      secret: 'supersecretkey123',
-      signOptions: { expiresIn: '1d' },
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        secret: configService.getOrThrow<string>('JWT_SECRET'),
+        signOptions: {
+          expiresIn: '1d',
+        },
+      }),
     }),
     ScheduleModule.forRoot(),
     ConfigModule.forRoot({

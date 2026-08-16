@@ -1,4 +1,11 @@
-import { IsBoolean, IsEnum, IsInt, IsOptional, IsUUID, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsUUID,
+  Min,
+} from 'class-validator';
 
 export enum PaymentType {
   REGISTRATION = 'REGISTRATION',
@@ -9,10 +16,10 @@ export enum PaymentType {
 
 export class CreatePaymentDto {
   @IsUUID()
-  membershipId: string;
+  membershipId!: string;
 
   @IsEnum(['CASH', 'UPI', 'CARD'])
-  paymentMode: 'CASH' | 'UPI' | 'CARD';
+  paymentMode!: 'CASH' | 'UPI' | 'CARD';
 
   /**
    * NEW — explicit amount
@@ -20,13 +27,13 @@ export class CreatePaymentDto {
    */
   @IsInt()
   @Min(1)
-  amount: number;
+  amount!: number;
 
   /**
    * NEW — intent of payment
    */
   @IsEnum(PaymentType)
-  paymentType: PaymentType;
+  paymentType!: PaymentType;
 
   /**
    * BACKWARD COMPATIBILITY
@@ -34,11 +41,11 @@ export class CreatePaymentDto {
    */
   @IsOptional()
   @IsBoolean()
-  isRegistrationFee?: boolean;
+  isRegistrationFee!: boolean;
 
-  // 👇 NEW (optional)
+  // NEW (optional)
   @IsOptional()
   extendMembership?: boolean;
   @IsOptional()
-  extendMonths?: number;
+  extendMonths!: number;
 }

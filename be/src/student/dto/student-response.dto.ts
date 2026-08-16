@@ -2,14 +2,14 @@ import { ApiProperty } from '@nestjs/swagger';
 
 export class StudentResponseDto {
   @ApiProperty()
-  id: string;
+  id!: string;
 
   @ApiProperty()
-  name: string;
+  name!: string;
 
   @ApiProperty()
-  mobile: string;
+  mobile!: string;
 
   @ApiProperty()
-  createdAt: Date;
+  createdAt!: Date;
 }
